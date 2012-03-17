@@ -1,79 +1,43 @@
-#include "fft.h"
-#include "cmplx.h"
-#include "mdefs.h"
-#include "basex.h"
-#include "bits.h"
-#include "trig_gen.h"
+#include <math.h>
 
-/*#lake:stop*/
-
-namespace lwml {
-
-cmplx fft::simple_dft( const vector& xr, const vector& xi, real n )
+static void swap( double* x, int j1, int j2 )
 {
-  test_size(xr.len(), xi.len());
-
-  real sr = 0.0;
-  real si = 0.0;
-  int len = xr.len();
-  trig_gen tg(2.0 * M_PI * n / len);
-  for( int k = 0; k < len; k++ ){
-    real sn = tg.get_sin();
-    real cs = tg.get_cos();
-    sr += xr[k] * cs + xi[k] * sn;
-    si += xi[k] * cs - xr[k] * sn;
-    tg.next();
-  }
-  return cmplx(sr/len, si/len);
+  double tmp = x[j1];
+  x[j1] = x[j2];
+  x[j2] = tmp;
 }
 
-cmplx fft::simple_idft( const vector& XR, const vector& XI, real k )
-{
-  test_size(XR.len(), XI.len());
-
-  real sr = 0.0;
-  real si = 0.0;
-  int len = XR.len();
-  trig_gen tg(2.0 * M_PI * k / len);
-  for( int n = 0; n < len; n++ ){
-    real sn = tg.get_sin();
-    real cs = tg.get_cos();
-    sr += XR[n] * cs - XI[n] * sn;
-    si += XI[n] * cs + XR[n] * sn;
-    tg.next();
-  }
-  return cmplx(sr, si);
-}
-
-// (1,-1),(-1,1),(1,0),(0,1) -> (1,1),(0,0),(3,-3),(0,-2)
-
-void fft::binrevers( vector& x )
+// двоичная инверсия массива
+static void binrevers( double* x, int n )
 {
   int i, j, k;
 
-  int n = x.len();
   for( j = i = 0; i < n - 1; i++ ){
     if( i < j )
-      x.swap(i, j);
+      swap(x, i, j);
     for( k = n / 2; k <= j; k /= 2 )
       j -= k;
     j += k;
   }
 }
 
-void fft::base_fft( vector& x, vector& y )
+static int intlog2( int x )
 {
-  real ur, ui, wr, wi, tr, ti, ur2;
+  int res;
+  for( res = 0; x != 1; res++ )
+    x /= 2;
+  return res;
+}
+
+static void base_fft( double* x, double* y, int n )
+{
+  double ur, ui, wr, wi, tr, ti, ur2;
   int i, j, l, le1, le2, ip;
 
-  test_size(x.len(), y.len());
-  int n = x.len();
-  if( !bits::is_pow2(n) )
-    runtime("non-pow2 vector size <sz=%d>", n);
   int r = intlog2(n);
 
-  binrevers(x);
-  binrevers(y);
+  binrevers(x, n);
+  binrevers(y, n);
   for( le2 = l = 1; l <= r; l++ ){
     le1 = le2;
     le2 *= 2;
@@ -84,14 +48,14 @@ void fft::base_fft( vector& x, vector& y )
     for( j = 0; j < le1; j++ ){
       for( i = j; i < n; i += le2 ){
         ip = i + le1;
-        tr = x.at(ip) * ur - y.at(ip) * ui;
-        ti = x.at(ip) * ui + y.at(ip) * ur;
-        x.at(ip) = x.at(i);
-        y.at(ip) = y.at(i);
-        x.at(i) += tr;
-        y.at(i) += ti;
-        x.at(ip) -= tr;
-        y.at(ip) -= ti;
+        tr = x[ip] * ur - y[ip] * ui;
+        ti = x[ip] * ui + y[ip] * ur;
+        x[ip] = x[i];
+        y[ip] = y[i];
+        x[i] += tr;
+        y[i] += ti;
+        x[ip] -= tr;
+        y[ip] -= ti;
       }
       ur2 = ur * wr - ui * wi;
       ui = ur * wi + ui * wr;
@@ -100,39 +64,34 @@ void fft::base_fft( vector& x, vector& y )
   }
 }
 
-void fft::scale( vector& a )
+static void scale( double* a, int n )
 {
-  int n = a.len();
-  for( int i = 0; i < n; i++ )
-    a.at(i) /= n;
+  int i;
+
+  for( i = 0; i < n; i++ )
+    a[i] /= n;
 }
 
-void fft::resort( vector& a )
+static void resort( double* a, int n )
 {
-  int n = a.len();
-  for( int i = 1; i < n / 2; i++ )
-    a.swap(i, n-i);
+  int i;
+
+  for( i = 1; i < n / 2; i++ )
+    swap(a, i, n-i);
 }
 
-void fft::cfft( vector& a, vector& b )
+// export
+
+void cfft( double* a, double* b, int n )
 {
-  scale(a);
-  scale(b);
-  base_fft(a, b);
+  scale(a, n);
+  scale(b, n);
+  base_fft(a, b, n);
 }
 
-void fft::cifft( vector& a, vector& b )
+void cifft( double* a, double* b, int n )
 {
-  resort(a);
-  resort(b);
-  base_fft(a, b);
+  resort(a, n);
+  resort(b, n);
+  base_fft(a, b, n);
 }
-
-void fft::disturb( vector& v )
-{
-  for( int j = 0; j < v.len(); j++ )
-    if( j % 2 == 1 )
-      v.at(j) = -v.at(j);
-}
-
-}; // namespace lwml
