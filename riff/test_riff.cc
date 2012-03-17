@@ -1,5 +1,3 @@
-// Разделение каналов riff wave
-
 #include <stdio.h>
 #include <stdlib.h>
 
