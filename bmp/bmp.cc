@@ -12,7 +12,7 @@ namespace {
   }
 
   bmp_error_t bmp_error = std_bmp_error;
-};
+}
 
 void setup_bmp_error_handler( bmp_error_t handler )
 {
@@ -65,7 +65,7 @@ void bmp_pal::read( FILE* file, int size )
     _len = size;
     if( fseek(file, PALETTE_OFFSET, SEEK_SET) != 0 )
       bmp_error("can't seek to palette");
-    if( fread(_pal, PALELEMSIZE, _len, file) != _len )
+    if( fread(_pal, PALELEMSIZE, _len, file) != static_cast<uint>(_len) )
       bmp_error("can't read palette");
   }
 }
@@ -75,7 +75,7 @@ void bmp_pal::write( FILE* file )
   if( _len != 0 ){
     if( fseek(file, PALETTE_OFFSET, SEEK_SET) != 0 )
       bmp_error("can't seek to palette");
-    if( fwrite(_pal, PALELEMSIZE, _len, file) != _len )
+    if( fwrite(_pal, PALELEMSIZE, _len, file) != static_cast<uint>(_len) )
       bmp_error("can't write palette");
   }
 }

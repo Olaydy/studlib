@@ -224,6 +224,10 @@ private:
 
   uchar getcolidx( int lidx, int x ) const;
   void  setcolidx( int lidx, int x, int cidx );
+
+  // запрещаем копировать объект
+  bitmap( const bitmap& );
+  bitmap& operator=( const bitmap& );
 };
 
 #endif // _BMP_

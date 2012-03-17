@@ -13,7 +13,7 @@ namespace {
   }
 
   riff_error_t riff_error = std_riff_error;
-};
+}
 
 void setup_riff_error_handler( riff_error_t handler )
 {
@@ -230,7 +230,7 @@ void riffwave_reader::seek( int pos )
   _buflen = (data_size() - pos < _bufsize / _alignment) ? data_size() - pos : _bufsize / _alignment;
   if( fseek(_file, _datapos + pos * _alignment, SEEK_SET) != 0 )
     riff_error("can't seek in file");
-  if( fread(_data, _alignment, _buflen, _file) != _buflen )
+  if( fread(_data, _alignment, _buflen, _file) != static_cast<uint>(_buflen) )
     riff_error("can't read data from file");
 }
 
@@ -358,7 +358,7 @@ namespace {
     if( fwrite(&buf, sizeof(uchar), 1, file) != 1 )
       riff_error("can't write alignment to file");
   }
-};
+}
 
 void save_as_riff( const char* fname, const double* data, int len, int sps )
 {

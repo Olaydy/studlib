@@ -77,10 +77,10 @@ int main()
 
   // выводим суммарный показатель невеществености для тех отсчетов, 
   // которые должны быть вещественными
-  printf("im_error=%le\n", fabs(xi[0]) + fabs(xi[LEN/2]));
+  printf("im_error=%e\n", fabs(xi[0]) + fabs(xi[LEN/2]));
   // выводим значение спектрального отсчета на частоте Найквиста
   // (для случайных данных это значение не обязано быть малым)
-  printf("discr_error=%le\n", fabs(xr[LEN/2]));
+  printf("discr_error=%e\n", fabs(xr[LEN/2]));
 
   // заполняем массивы для ДПФ
   double xr2[LEN], xi2[LEN];
@@ -98,7 +98,7 @@ int main()
     simple_dft(xr2, xi2, LEN, j, &sp_r, &sp_i);
     err += fabs(sp_r - xr[j]) + fabs(sp_i - xi[j]);
   }
-  printf("fft_error=%le\n", err);
+  printf("fft_error=%e\n", err);
 
   // выполняем обратное БПФ
   cifft(xr, xi, LEN);
@@ -108,5 +108,5 @@ int main()
   for( j = 0; j < LEN; j++ ){
     derr += fabs(xr[j] - d[j]) + fabs(xi[j]);
   }
-  printf("ifft_error=%le\n", derr);
+  printf("ifft_error=%e\n", derr);
 }

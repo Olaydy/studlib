@@ -22,7 +22,11 @@ int main( int argc, char *argv[] ){
   printf("sps=%d\n", sps);
 
   // читаем данные в массив
-  int data[len];
+  int* data = static_cast<int*>(malloc(len * sizeof(int)));
+  if( data == 0 ){
+    printf("can't allocate buffer\n");
+    exit(1);
+  }    
   for( int j = 0; j < len; j++ )
     data[j] = in(j, riffwave_reader::LEFT);
 
@@ -44,7 +48,11 @@ int main( int argc, char *argv[] ){
   printf("min=%d max=%d\n", min, max);
 
   // перемасштабируем данные на диапазон [-1, 1]
-  double rdata[len];
+  double* rdata = static_cast<double*>(malloc(len * sizeof(double)));
+  if( rdata == 0 ){
+    printf("can't allocate buffer\n");
+    exit(1);
+  }    
   for( int j = 0; j < len; j++ )
     rdata[j] = 2.0 * static_cast<double>(data[j] - min) / static_cast<double>(max - min) - 1.0;
 
