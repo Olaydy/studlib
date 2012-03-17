@@ -1,12 +1,24 @@
 #include "riff.h"
-#include "stdmem.h"
-#include "mdefs.h"
-#include "basex.h"
-#include "filename.h"
 
-/*#lake:stop*/
+#include <stdlib.h>
+#include <string.h>
 
-namespace lwml {
+// error handler
+
+namespace {
+  void std_riff_error( const char* msg )
+  {
+    fprintf(stderr, "riff: error: %s\n", msg);
+    exit(1);
+  }
+
+  riff_error_t riff_error = std_riff_error;
+};
+
+void setup_riff_error_handler( riff_error_t handler )
+{
+  riff_error = handler;
+}
 
 // definitions
 
@@ -70,14 +82,14 @@ const int PCM16_MID = 0;
 
 // chunk header
 
-class chunkhdr : public value {
+class chunkhdr {
 public:
   chunkhdr() {}
-  chunkhdr( referer<stream> file ) { read(file); }
+  chunkhdr( FILE* file ) { read(file); }
 
-  void read( referer<stream> );
+  void read( FILE* );
 
-  void skipdata( referer<stream> );
+  void skipdata( FILE* );
 
   bool is_fmt() const  { return isid(FMTCHUNK_ID); }
   bool is_data() const { return isid(DATACHUNK_ID); }
@@ -91,15 +103,18 @@ private:
   bool isid( const char* id ) const;
 };
 
-void chunkhdr::read( referer<stream> file )
+void chunkhdr::read( FILE* file )
 {
-  file->read(_id, sizeof(_id));
-  file->read(&_sz, sizeof(_sz));
+  if( fread(_id, sizeof(_id), 1, file) != 1 )
+    riff_error("can't read chunk header from file");
+  if( fread(&_sz, sizeof(_sz), 1, file) != 1 )
+    riff_error("can't read chunk header from file");
 }
 
-void chunkhdr::skipdata( referer<stream> file )
+void chunkhdr::skipdata( FILE* file )
 {
-  file->skip(_sz);
+  if( fseek(file, _sz, SEEK_CUR) != 0 )
+    riff_error("can't skip chunk data in file");
 }
 
 bool chunkhdr::isid( const char *id ) const
@@ -109,9 +124,9 @@ bool chunkhdr::isid( const char *id ) const
 
 // WAVE-form hdr
 
-class waveformhdr : public value {
+class waveformhdr {
 public:
-  waveformhdr( referer<stream> );
+  waveformhdr( FILE* );
 
   bool is_wave() const;
 
@@ -119,9 +134,10 @@ private:
   char _id[WAVEFORMID_SIZE];
 };
 
-waveformhdr::waveformhdr( referer<stream> file )
+waveformhdr::waveformhdr( FILE* file )
 {
-  file->read(_id, WAVEFORMID_SIZE);
+  if( fread(&_id, WAVEFORMID_SIZE, 1, file) != 1 )
+    riff_error("can't read waveform header from file");
 }
 
 bool waveformhdr::is_wave() const
@@ -131,9 +147,9 @@ bool waveformhdr::is_wave() const
 
 // fmt-chunk
 
-class fmtchunk : public value {
+class fmtchunk {
 public:
-  fmtchunk( referer<stream> file, int size );
+  fmtchunk( FILE* file, int size );
 
   int channels() const { return _channels; }
   int samplespersec() const { return _samplespersec; }
@@ -151,23 +167,31 @@ private:
   // _alignment = (nChannels * nBitsPerSample)/8
 };
 
-fmtchunk::fmtchunk( referer<stream> file, int size )
+fmtchunk::fmtchunk( FILE* file, int size )
 {
   if( size < FMTCHUNK_DATASIZE )
-    throw ex_riff("incorrect data size in fmt-chunk");
+    riff_error("incorrect data size in fmt-chunk");
 
-  file->read(&_formattag, sizeof(_formattag));
-  file->read(&_channels, sizeof(_channels));
-  file->read(&_samplespersec, sizeof(_samplespersec));
-  file->read(&_bytespersec, sizeof(_bytespersec));
-  file->read(&_alignment, sizeof(_alignment));
-  file->read(&_bitspersample, sizeof(_bitspersample));
+  if( fread(&_formattag, sizeof(_formattag), 1, file) != 1 )
+    riff_error("can't read format chunk from file");
+  if( fread(&_channels, sizeof(_channels), 1, file) != 1 )
+    riff_error("can't read format chunk from file");
+  if( fread(&_samplespersec, sizeof(_samplespersec), 1, file) != 1 )
+    riff_error("can't read format chunk from file");
+  if( fread(&_bytespersec, sizeof(_bytespersec), 1, file) != 1 )
+    riff_error("can't read format chunk from file");
+  if( fread(&_alignment, sizeof(_alignment), 1, file) != 1 )
+    riff_error("can't read format chunk from file");
+  if( fread(&_bitspersample, sizeof(_bitspersample), 1, file) != 1 )
+    riff_error("can't read format chunk from file");
 
   if( _formattag != PCMFORMAT_ID )
-    throw ex_riff("file format seems not to be a PCM");
+    riff_error("file format seems not to be a PCM");
 
-  if( size > FMTCHUNK_DATASIZE )
-    file->skip(size-FMTCHUNK_DATASIZE);
+  if( size > FMTCHUNK_DATASIZE ){
+    if( fseek(file, size-FMTCHUNK_DATASIZE, SEEK_CUR) != 0 )
+      riff_error("can't skip format chunk data in file");
+  }
 }
 
 // riff wave reader
@@ -200,27 +224,32 @@ int riffwave_reader::wait4fmt()
 
 void riffwave_reader::seek( int pos )
 {
-  test_index(pos, data_size());
+  if( pos < 0 || pos > data_size()-1 )
+    riff_error("position out of bounds");
   _bufpos = pos;
-  _bufsize = t_min(data_size() - pos, _data.len() / _alignment);
-  _file->seek(_datapos + pos * _alignment);
-  _file->read(_data.access_raw_data(), _bufsize * _alignment);
+  _buflen = (data_size() - pos < _bufsize / _alignment) ? data_size() - pos : _bufsize / _alignment;
+  if( fseek(_file, _datapos + pos * _alignment, SEEK_SET) != 0 )
+    riff_error("can't seek in file");
+  if( fread(_data, _alignment, _buflen, _file) != _buflen )
+    riff_error("can't read data from file");
 }
 
-riffwave_reader::riffwave_reader( const char *nm, int bufsize )
+riffwave_reader::riffwave_reader( const char *fname, int bufsize )
 {
   // открыть файл
-  _file = stream::create(nm, fmREAD, fmBINARY);
+  _file = fopen(fname, "rb");
+  if( _file == 0 )
+    riff_error("can't open file");
 
   // проверить чанк RIFF
   chunkhdr chh(_file);
   if( !chh.is_riff() )
-    throw ex_riff("bad riff-chunk, <%s>", nm);
+    riff_error("bad riff-chunk");
 
   // проверить чанк WAVE
   waveformhdr wfh(_file);
   if( !wfh.is_wave() )
-    throw ex_riff("bad wave-chunk, <%s>", nm);
+    riff_error("bad wave-chunk");
 
   // дождаться чанка fmt и прочитать
   int fmtsize = wait4fmt();
@@ -229,113 +258,127 @@ riffwave_reader::riffwave_reader( const char *nm, int bufsize )
   _samplespersec = fmt.samplespersec();
   _bitspersample = fmt.bitspersample();
   if( _bitspersample != 8 && _bitspersample != 16 )
-    throw ex_riff("can't read RIFF WAVE file with given bitspersample (%d)", _bitspersample);
+    riff_error("RIFF WAVE file with unsupported bitspersample (may be 8 or 16)");
   _alignment = fmt.alignment();
   if( _alignment * 8 != _channels * _bitspersample )
-    throw ex_riff("incorrect value of alignment field in RIFF fmt chunk");
+    riff_error("incorrect value of alignment field in RIFF fmt chunk");
 
   // дождаться данных и прочитать
   _datasize = wait4data();
-  _datapos = _file->tell();
+  _datapos = ftell(_file);
   if( _datasize % _alignment != 0 )
-    throw ex_riff("incorrect data size in RIFF data chunk");
+    riff_error("incorrect data size in RIFF data chunk");
 
   if( bufsize > 0 ) // задан размер буфера
-    _data.resize(bufsize * _alignment);
+    _bufsize = bufsize * _alignment;
   else // буфер вмещает все данные из файла
-    _data.resize(_datasize);
+    _bufsize = _datasize;
+  _data = static_cast<uchar*>(malloc(_bufsize));
+  if( _data == 0 )
+    riff_error("can't allocate memory buffer");
 
   seek(0);
 }
 
-void riffwave_reader::printinfo( referer<stream> file ) const
+riffwave_reader::~riffwave_reader()
 {
-  file->printf("channels=%d\n", _channels);
-  file->printf("samplespersec=%d\n", _samplespersec);
-  file->printf("bitspersample=%d\n", _bitspersample);
-  file->printf("datasize=%d\n", _datasize);
+  if( fclose(_file) != 0 )
+    riff_error("can't close file");
+  free(_data);
 }
 
 int riffwave_reader::operator()( int j, channel ch ) const
 {
-  test_index(j, buf_size());
+  if( j < 0 || j > buf_size()-1 )
+    riff_error("index out of bounds");
   if( ch == RIGHT && _channels != 2 )
-    fail_assert("can't read right channel for mono RIFF WAVE");
+    riff_error("can't read right channel for mono RIFF WAVE");
 
   int sample = j * _alignment;
   if( ch == RIGHT ) sample += (_bitspersample == 8) ? 1 : 2;
   uint16 buf = (_bitspersample == 8) ? _data[sample] : (_data[sample+1] << 8) | _data[sample];
-  return static_cast<int16>(buf); //!! TODO: исправить
+  return static_cast<int16>(buf);
 }
 
 // riff wave saver
 
-void riffwave_saver::write_chunkhdr( referer<stream> file, const char *id, uint32 sz )
-{
-  file->write(id, CHUNKID_SIZE);
-  file->write(&sz, sizeof(uint32));
-}
-
-void riffwave_saver::write_fmt( referer<stream> file, int sps )
-{
-  uint16 formattag = PCMFORMAT_ID;           // категори формата
-  uint16 channels = OUT_CHANNELS;            // число каналов
-  uint32 samplespersec = sps;                // частота дискретизации
-  uint16 bitspersample = OUT_BITSPERSAMPLE;  // разрдность дискретизации
-  uint32 bytespersec = OUT_BYTESPERSEC(sps); // число байт в секунду
-  uint16 alignment = OUT_ALIGNMENT;          // выравнивание данных
-
-  file->write(&formattag, sizeof(formattag));
-  file->write(&channels, sizeof(channels));
-  file->write(&samplespersec, sizeof(samplespersec));
-  file->write(&bytespersec, sizeof(bytespersec));
-  file->write(&alignment, sizeof(alignment));
-  file->write(&bitspersample, sizeof(bitspersample));
-}
-
-void riffwave_saver::write_data( referer<stream> file, const vector& v )
-{
-  real min = v.min();
-  real max = v.max();
-  if( max == min )
-    max = min + 1.0;
-  if( min == min + 1.0 || max == max + 1.0 )
-    throw ex_sing();
-
-  for( int j = 0; j < v.len(); j++ ){
-    uint16 buf = scale::interval(v[j], min, max, PCM16_MIN, PCM16_MAX);
-    uchar lo = buf & 0x00FF;
-    uchar hi = (buf >> 8) & 0x00FF;
-    file->write(&lo, sizeof(lo));
-    file->write(&hi, sizeof(hi));
+namespace {
+  void write_chunkhdr( FILE* file, const char *id, uint32 sz )
+  {
+    if( fwrite(id, CHUNKID_SIZE, 1, file) != 1 )
+      riff_error("can't write chunk header to file");
+    if( fwrite(&sz, sizeof(uint32), 1, file) != 1 )
+      riff_error("can't write chunk size to file");
   }
-}
 
-void riffwave_saver::write_align( referer<stream> file )
+  void write_fmt( FILE* file, int sps )
+  {
+    uint16 formattag = PCMFORMAT_ID;           // категори формата
+    uint16 channels = OUT_CHANNELS;            // число каналов
+    uint32 samplespersec = sps;                // частота дискретизации
+    uint16 bitspersample = OUT_BITSPERSAMPLE;  // разрдность дискретизации
+    uint32 bytespersec = OUT_BYTESPERSEC(sps); // число байт в секунду
+    uint16 alignment = OUT_ALIGNMENT;          // выравнивание данных
+
+    if( fwrite(&formattag, sizeof(formattag), 1, file) != 1 )
+      riff_error("can't write waveform to file");
+    if( fwrite(&channels, sizeof(channels), 1, file) != 1 )
+      riff_error("can't write waveform to file");
+    if( fwrite(&samplespersec, sizeof(samplespersec), 1, file) != 1 )
+      riff_error("can't write waveform to file");
+    if( fwrite(&bytespersec, sizeof(bytespersec), 1, file) != 1 )
+      riff_error("can't write waveform to file");
+    if( fwrite(&alignment, sizeof(alignment), 1, file) != 1 )
+      riff_error("can't write waveform to file");
+    if( fwrite(&bitspersample, sizeof(bitspersample), 1, file) != 1 )
+      riff_error("can't write waveform to file");
+  }
+
+  void write_data( FILE* file, const double* data, int len )
+  {
+    for( int j = 0; j < len; j++ ){
+      double val = data[j];
+      if( val < -1.0 )
+        val = -1.0;
+      if( val > 1.0)
+        val = 1.0;
+      uint16 buf = static_cast<uint16>(val * PCM16_MAX);
+      uchar lo = buf & 0x00FF;
+      uchar hi = (buf >> 8) & 0x00FF;
+      if( fwrite(&lo, sizeof(lo), 1, file) != 1 )
+        riff_error("can't write data to file");
+      if( fwrite(&hi, sizeof(hi), 1, file) != 1 )
+        riff_error("can't write data to file");
+    }
+  }
+
+  void write_align( FILE* file )
+  {
+    uchar buf = 0;
+    if( fwrite(&buf, sizeof(uchar), 1, file) != 1 )
+      riff_error("can't write alignment to file");
+  }
+};
+
+void save_as_riff( const char* fname, const double* data, int len, int sps )
 {
-  uchar buf = 0;
-  file->write(&buf, sizeof(uchar));
-}
+  FILE* file = fopen(fname, "wb");
 
-void riffwave_saver::put( const char* name, const vector& x, int sps )
-{
-  referer<stream> file = stream::create(name, fmWRITE, fmBINARY);
-
-  int riff_size = WAVEFORMID_SIZE + FMTCHUNK_SIZE + DATACHUNK_SIZE(x.len());
+  int riff_size = WAVEFORMID_SIZE + FMTCHUNK_SIZE + DATACHUNK_SIZE(len);
   // RIFF-chunk
   write_chunkhdr(file, RIFFCHUNK_ID, ALIGN2EVEN(riff_size));
   // WAVE-form
-  file->write(WAVEFORM_ID, WAVEFORMID_SIZE);
+  if( fwrite(WAVEFORM_ID, WAVEFORMID_SIZE, 1, file) != 1 )
+    riff_error("can't write waveform id to file");
   // fmt_chunk
   write_chunkhdr(file, FMTCHUNK_ID, FMTCHUNK_DATASIZE);
   write_fmt(file, sps);
   // data_chunk
-  write_chunkhdr(file, DATACHUNK_ID, DATA_SIZE(x.len()));
-  write_data(file, x);
+  write_chunkhdr(file, DATACHUNK_ID, DATA_SIZE(len));
+  write_data(file, data, len);
   // alignment
-  if( ISODD(riff_size) ) write_align(file);
+  if( ISODD(riff_size) ) 
+    write_align(file);
+
+  fclose(file);
 }
-
-// данные хрантся в старших bitspersample битах
-
-}; // namespace lwml

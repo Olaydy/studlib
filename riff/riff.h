@@ -1,49 +1,55 @@
-// lwml, (c) ltwood
+// Simple PCM RIFF WAVE support
 
 #ifndef _RIFF_
 #define _RIFF_
 
-// PCM WAVE RIFF
-// Pulse Code Modulation
-// Resource Interchange File Format
+#include <stdio.h>
 
-#include "defs.h"
-#include "vector.h"
-#include "stream.h"
-#include "t_membuf.h"
+#include "cdefs.h"
 
-/*#lake:stop*/
+typedef void (*riff_error_t)( const char* msg );
 
-namespace lwml {
+void setup_riff_error( riff_error_t );
 
-// Исключение при ошибке интерпретации содержимого RIFF-Файла
+// Чтение файла формата wav
 
-DEF_EX_TYPE_MSG(ex_integrity, ex_riff, "incorrect riff");
-
-class riffwave_reader : public value {
+class riffwave_reader {
 public:
   // Параметр bufsize задает размер буфера для варианта буфериованного чтения данных.
-  // Если значение этого параметра равно 0 (по умолчанию), то все данные читаются сразу.
-  riffwave_reader( const char*, int bufsize = 0 );
+  // Если значение этого параметра равно 0 (по умолчанию), то все данные читаются сразу
+  // и размер буфера совпадает с количеством отсчетов в файле (см. data_size()).
+  riffwave_reader( const char* fname, int bufsize = 0 );
 
-  void printinfo( referer<stream> ) const;
+  ~riffwave_reader();
 
   int channels() const { return _channels; }
+    // Получение количества канало (моно/стерео)
   int samplespersec() const { return _samplespersec; }
+    // Получение количества отсчетов в секунду
   int bitspersample() const { return _bitspersample; }
+    // Получение количества битов на один отсчет
 
   int data_size() const { return _datasize / _alignment; }
+    // Получение количества отсчетов
 
+  // Константы для левого и правого каналов
+  // Для монофонической записи считается, что присутствует только левый канал
   enum channel { LEFT, RIGHT };
 
+  // Получение одного отсчета из заданного канала
+  // Границы изменения номера отсчета j определяются
+  // размером буфера, заданным при конструировании.
   int operator()( int j, channel ch = LEFT ) const;
 
+  // Позиционирование буфера на заданное место в файле
   void seek( int pos );
+  // Получение текущей позиции буфера
   int tell() const { return _bufpos; }
-  int buf_size() const { return _bufsize; }
+  // Получение размера буфера
+  int buf_size() const { return _buflen; }
 
 private:
-  referer<stream> _file;
+  FILE* _file;
 
   int _channels;
   int _samplespersec; // в одном канале
@@ -53,24 +59,17 @@ private:
   int _datapos;       // позиция начала данных в файле в байтах
 
   int _bufpos;           // текущая позиция буфера в отсчетах
-  int _bufsize;          // размер заполненной части буфера
-  t_membuf<uchar> _data;
+  int _buflen;           // размер заполненной части буфера
+  int _bufsize;          // полный размер буфера в байтах
+  uchar* _data;
 
   int wait4data();
   int wait4fmt();
 };
 
-class riffwave_saver : public scope {
-public:
-  static void put( const char*, const vector&, int sps );
-
-private:
-  static void write_chunkhdr( referer<stream> file, const char *id, uint32 sz );
-  static void write_fmt( referer<stream> file, int sps );
-  static void write_data( referer<stream> file, const vector& );
-  static void write_align( referer<stream> file );
-};
-
-}; // namespace lwml
+// Вывод массива data длиной len в одноканальный 16-битный wav с именем fname.
+// Исходные данные должны представлять собой вещественные числа из диапазона [-1.0, 1.0].
+// sps - частота дискретизации в герцах (количество отсчетов в секунду).
+void save_as_riff( const char* fname, const double* data, int len, int sps );
 
 #endif // _RIFF_
