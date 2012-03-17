@@ -1,28 +1,25 @@
-// Работа с файлами в формате windows bitmap
-// lwml, (c) ltwood
+// windows bitmap
 
 #ifndef _BMP_
 #define _BMP_
 
-#include "defs.h"
-#include "mdefs.h"
-#include "stream.h"
-#include "t_membuf.h"
-#include "rgb.h"
+#include <stdio.h>
 
-/*#lake:stop*/
+#include "cdefs.h"
 
-namespace lwml {
+// Тип функции-обработчика ошибок.
+typedef void (*bmp_error_t)( const char* msg );
 
-// Исключение при ошибке интерпретации содержимого битмапа
-
-DEF_EX_TYPE_MSG(ex_integrity, ex_bmp, "incorrect bitmap");
+// Установка обработчика ошибок.
+// По умолчанию обработчик ошибок выводит сообщение на stdout
+// и завершает выполнение программы.
+void setup_bmp_error( bmp_error_t );
 
 // Представляет цвет точки на картинке формата BMP
 // Цвет представлен в виде трех компонент в цветовой схеме RGB.
 // Каждая цветовая компонента представлена однобайтовым значением.
 
-class bmp_rgb : public value {
+class bmp_rgb {
 public:
   // Иинициализация по умолчанию
   // При такой инициализации получается черная точка
@@ -32,13 +29,6 @@ public:
   // Инициализация явно заданными значениями
   bmp_rgb( uchar r, uchar g, uchar b )
     : _red(r), _green(g), _blue(b) {}
-
-  // Инициализация по обычному вещественному цвету
-  bmp_rgb( const rgbcolor& rgb )
-    : _red(fpr::lround(255.0 * rgb.red())),
-      _green(fpr::lround(255.0 * rgb.green())),
-      _blue(fpr::lround(255.0 * rgb.blue()))
-  {}
 
   // Одновременная установка всех цветовых компонент
   void set( uchar r, uchar g, uchar b ){
@@ -58,11 +48,8 @@ public:
   void set_green( uchar g ) { _green = g; }
   void set_blue( uchar b )  { _blue = b; }
 
-  // Получить обычное вещественное представление цвета
-  rgbcolor get_rgb() const { return rgbcolor(_red/255.0, _green/255.0, _blue/255.0); }
-
   // Получить целочисленное значение яркости
-  uchar gray() const { return static_cast<uchar>(fpr::lround(255.0 * get_rgb().gray())); }
+  uchar gray() const;
 
 private:
   uchar _red, _green, _blue;
@@ -79,7 +66,7 @@ const int MAXPALSIZE = 256;
 // как она хранится в файле формата BMP.
 // Выделение цветовых компонентов осуществляется в момент обращения.
 
-class bmp_pal : public value {
+class bmp_pal {
 public:
   // Создается серая палитра с растущим значением яркости
   // size - размер палитры
@@ -104,7 +91,7 @@ public:
 
   // Запись палитры в файл BMP
   // file - двоичный файл, в который производится запись
-  void save( referer<stream> file ) { write(file); }
+  void save( FILE* file ) { write(file); }
 
 private:
   int _len;
@@ -113,13 +100,13 @@ private:
   // чтение палитры заданной длины из файла по заданному смещению
   // полностью заново конструирует палитру
   // используется только методами класса bitmap
-  void read( referer<stream> file, int size );
-  void write( referer<stream> file );
+  void read( FILE* file, int size );
+  void write( FILE* file );
 };
 
 // Класс реализует чтение и запись заголовка bmp-файла
 
-class bmp_header : public value {
+class bmp_header {
 public:
   // Прочитать заголовок из файла.
   // fname - имя файла, из которого производится чтение
@@ -132,7 +119,7 @@ public:
   bmp_header( int height, int width, int palsize );
 
   // Сохранить заголовок в двоичный файл
-  void save( referer<stream> file ) { write(file); }
+  void save( FILE* file ) { write(file); }
 
   // Получить размер палитры в записях
   int palsize() const { return _palsize; }
@@ -155,13 +142,13 @@ private:
   int _bitsperpixel;
   int _bpl;
 
-  void write16( referer<stream>, int );
-  void write32( referer<stream>, int );
-  int read16( referer<stream>, int ofs );
-  int read32( referer<stream>, int ofs );
+  void write16( FILE* file, int );
+  void write32( FILE* file, int );
+  int read16( FILE* file, int ofs );
+  int read32( FILE* file, int ofs );
 
-  void write( referer<stream> file );
-  void read( referer<stream> file );
+  void write( FILE* file );
+  void read( FILE* file );
 
   int width2bpl( int width );
   int palsize2bpp( int );
@@ -175,7 +162,7 @@ private:
 // по следующему правилу: 0->24, 2->1, 16->4, 256->8.
 // Y-координата увеличивается при движении вниз.
 
-class bitmap : public value {
+class bitmap {
 public:
   // Чтение изображения из файла
   bitmap( const char* fname );
@@ -185,6 +172,8 @@ public:
   // width - ширина создаваемого изображения
   // pal - палитра создаваемого изображения
   bitmap( int height, int width, const bmp_pal& pal );
+
+  ~bitmap();
 
   // Сохранение изображения в файле
   void save( const char* name );
@@ -225,18 +214,16 @@ public:
 private:
   bmp_header _hdr;
   bmp_pal _pal;
-  t_membuf<uchar> _image;
+  uchar* _image;
 
-  uchar read_byte( referer<stream> );
-  void write_byte( referer<stream>, uchar );
+  uchar read_byte( FILE* );
+  void write_byte( FILE*, uchar );
 
-  void read( referer<stream> );
-  void write( referer<stream> );
+  void read( FILE* );
+  void write( FILE* );
 
   uchar getcolidx( int lidx, int x ) const;
   void  setcolidx( int lidx, int x, int cidx );
 };
-
-}; // namespace lwml
 
 #endif // _BMP_

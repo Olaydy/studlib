@@ -1,11 +1,34 @@
 #include "bmp.h"
-#include "stdmem.h"
-#include "filename.h"
-#include "basex.h"
 
-/*#lake:stop*/
+#include <stdlib.h>
 
-namespace lwml {
+// error handler
+
+namespace {
+  void std_bmp_error( const char* msg )
+  {
+    fprintf(stderr, "bmp: error: %s\n", msg);
+    exit(1);
+  }
+
+  bmp_error_t bmp_error = std_bmp_error;
+};
+
+void setup_bmp_error_handler( bmp_error_t handler )
+{
+  bmp_error = handler;
+}
+
+// bmp_rgb
+
+const double RED_GRAY_WEIGHT   = 0.299;
+const double GREEN_GRAY_WEIGHT = 0.587;
+const double BLUE_GRAY_WEIGHT  = 0.114;
+
+uchar bmp_rgb::gray() const
+{
+  return static_cast<uchar>(RED_GRAY_WEIGHT * _red + GREEN_GRAY_WEIGHT * _green + BLUE_GRAY_WEIGHT * _blue);
+}
 
 // constants
 
@@ -34,31 +57,35 @@ const int PALELEMSIZE            =  4;
 
 // bmp_pal
 
-void bmp_pal::read( referer<stream> file, int size )
+void bmp_pal::read( FILE* file, int size )
 {
   if( size == 0 )
     _len = 0;
   else{
     _len = size;
-    file->seek(PALETTE_OFFSET);
-    file->read(_pal, size * PALELEMSIZE);
+    if( fseek(file, PALETTE_OFFSET, SEEK_SET) != 0 )
+      bmp_error("can't seek to palette");
+    if( fread(_pal, PALELEMSIZE, _len, file) != _len )
+      bmp_error("can't read palette");
   }
 }
 
-void bmp_pal::write( referer<stream> file )
+void bmp_pal::write( FILE* file )
 {
   if( _len != 0 ){
-    file->seek(PALETTE_OFFSET);
-    file->write(_pal, _len * PALELEMSIZE);
+    if( fseek(file, PALETTE_OFFSET, SEEK_SET) != 0 )
+      bmp_error("can't seek to palette");
+    if( fwrite(_pal, PALELEMSIZE, _len, file) != _len )
+      bmp_error("can't write palette");
   }
 }
 
 bmp_pal::bmp_pal( int size )
 {
   if( size < 0 )
-    runtime("incorrect palette size (%d)", size);
+    bmp_error("incorrect palette size");
   if( size > MAXPALSIZE )
-    runtime("too long bitmap palette (%d)", size);
+    bmp_error("too long bitmap palette");
   _len = size;
   if( _len != 0 ){
     for( int j = 0; j < _len; j++ ){
@@ -71,53 +98,64 @@ bmp_pal::bmp_pal( int size )
 bmp_pal::bmp_pal( const char* fname, int sz )
 {
   if( sz < 0 )
-    runtime("negative palette size (%d)", sz);
+    bmp_error("negative palette size");
   if( sz > MAXPALSIZE )
-    runtime("too long bitmap palette (%d)", sz);
-  referer<stream> file = stream::create(fname, fmREAD, fmBINARY);
+    bmp_error("too long bitmap palette");
+  FILE* file = fopen(fname, "rb");
+  if( file == 0 )
+    bmp_error("can't open file");
   read(file, sz);
+  fclose(file);
 }
 
 bmp_rgb bmp_pal::get( int idx ) const
 {
-  test_index(idx, _len);
+  if( idx < 0 || idx > _len-1 )
+    bmp_error("index out of palette");
   uint col = _pal[idx];
   return bmp_rgb((col & 0xff0000) >> 16, (col & 0x00ff00) >> 8, col & 0x0000ff);
 }
 
 void bmp_pal::put( int idx, bmp_rgb rgb )
 {
-  test_index(idx, _len);
+  if( idx < 0 || idx > _len-1 )
+    bmp_error("index out of palette");
   _pal[idx] = (rgb.red() << 16) | (rgb.green() << 8) | rgb.blue();
 }
 
 // bmp_header
 
-void bmp_header::write16( referer<stream> file, int x )
+void bmp_header::write16( FILE* file, int x )
 {
   uint16 buf = x;
-  file->write(&buf, sizeof(buf));
+  if( fwrite(&buf, sizeof(buf), 1, file) != 1 )
+    bmp_error("can't write header");
 }
 
-void bmp_header::write32( referer<stream> file, int x )
+void bmp_header::write32( FILE* file, int x )
 {
   uint32 buf = x;
-  file->write(&buf, sizeof(buf));
+  if( fwrite(&buf, sizeof(buf), 1, file) != 1 )
+    bmp_error("can't write header");
 }
 
-int bmp_header::read16( referer<stream> file, int ofs )
+int bmp_header::read16( FILE* file, int ofs )
 {
   uint16 x;
-  file->seek(ofs);
-  file->read(&x, sizeof(x));
+  if( fseek(file, ofs, SEEK_SET) != 0 )
+    bmp_error("can't seek to header");
+  if( fread(&x, sizeof(x), 1, file) != 1 )
+    bmp_error("can't read header");
   return x;
 }
 
-int bmp_header::read32( referer<stream> file, int ofs )
+int bmp_header::read32( FILE* file, int ofs )
 {
   uint32 x;
-  file->seek(ofs);
-  file->read(&x, sizeof(x));
+  if( fseek(file, ofs, SEEK_SET) != 0 )
+    bmp_error("can't seek to header");
+  if( fread(&x, sizeof(x), 1, file) != 1 )
+    bmp_error("can't read header");
   return x;
 }
 
@@ -130,7 +168,7 @@ int bmp_header::read32( referer<stream> file, int ofs )
 // Важные поля:
 //   image offset, width, height, bits per pixel
 
-void bmp_header::write( referer<stream> file )
+void bmp_header::write( FILE* file )
 {
   int imageoffset = _palsize * PALELEMSIZE + HEADERSIZE;
   write16(file, MAGIC);                          // magic
@@ -150,19 +188,19 @@ void bmp_header::write( referer<stream> file )
   write32(file, 0);                              // importantcolors
 }
 
-void bmp_header::read( referer<stream> file )
+void bmp_header::read( FILE* file )
 {
   if( read16(file, MAGIC_OFFSET) != MAGIC )
-    throw ex_bmp("wrong magic word");
+    bmp_error("wrong magic word");
 
   if( read32(file, IMAGEHEADERSIZE_OFFSET) != IMAGEHEADERSIZE )
-    throw ex_bmp("unknown bitmap type");
+    bmp_error("unknown bitmap type");
 
   if( read16(file, PLANES_OFFSET) != PLANES )
-    throw ex_bmp("wrong planes number");
+    bmp_error("wrong planes number");
 
   if( read32(file, COMPRESSION_OFFSET) != COMPRESSION )
-    throw ex_bmp("can't read compressed bitmap");
+    bmp_error("can't read compressed bitmap");
 
   int imageoffset = read32(file, IMAGEOFFSET_OFFSET);
   _palsize = (imageoffset - HEADERSIZE) / PALELEMSIZE;
@@ -192,7 +230,7 @@ int bmp_header::width2bpl( int width )
       bpl = width * 4;
       break;
     default:
-      fail_unexpected();
+      bmp_error("unexpected depth of color");
   }
   return (bpl + 3) & ~0x03;
 }
@@ -205,15 +243,18 @@ int bmp_header::palsize2bpp( int ps )
     case 16:  return 4;
     case 256: return 8;
     default:
-      runtime("incorrect palette size (%d) but may be 0, 2, 16, 256 only", ps);
+      bmp_error("incorrect palette size (may be 0, 2, 16, 256 only)");
       return 0; // has no mean!
   }
 }
 
 bmp_header::bmp_header( const char* fname )
 {
-  referer<stream> file = stream::create(fname, fmREAD, fmBINARY);
+  FILE* file = fopen(fname, "rb");
+  if( file == 0 )
+    bmp_error("can't open file");
   read(file);
+  fclose(file);
 }
 
 bmp_header::bmp_header( int height, int width, int palsize )
@@ -227,29 +268,33 @@ bmp_header::bmp_header( int height, int width, int palsize )
 
 // bitmap
 
-uchar bitmap::read_byte( referer<stream> file )
+uchar bitmap::read_byte( FILE* file )
 {
   uchar x;
-  file->read(&x, sizeof(x));
+  if( fread(&x, sizeof(x), 1, file) != 1 )
+    bmp_error("can't read header");
   return x;
 }
 
-void bitmap::write_byte( referer<stream> file, uchar x )
+void bitmap::write_byte( FILE* file, uchar x )
 {
-  file->write(&x, sizeof(x));
+  if( fwrite(&x, sizeof(x), 1, file) != 1 )
+    bmp_error("can't write header");
 }
 
-void bitmap::read( referer<stream> file )
+void bitmap::read( FILE* file )
 {
-  file->seek(HEADERSIZE + _hdr.palsize() * PALELEMSIZE);
+  if( fseek(file, HEADERSIZE + _hdr.palsize() * PALELEMSIZE, SEEK_SET) != 0 )
+    bmp_error("can't seek to data");
   int byte_num = _hdr.bytesperline() * _hdr.height();
   for( int j = 0; j < byte_num; j++ )
     _image[j] = read_byte(file);
 }
 
-void bitmap::write( referer<stream> file )
+void bitmap::write( FILE* file )
 {
-  file->seek(HEADERSIZE + _hdr.palsize() * PALELEMSIZE);
+  if( fseek(file, HEADERSIZE + _hdr.palsize() * PALELEMSIZE, SEEK_SET) != 0 )
+    bmp_error("can't seek to data");
   int byte_num = _hdr.bytesperline() * _hdr.height();
   for( int j = 0; j < byte_num; j++ )
     write_byte(file, _image[j]);
@@ -257,23 +302,36 @@ void bitmap::write( referer<stream> file )
 
 bitmap::bitmap( const char* fname )
   : _hdr(fname),
-    _pal(fname, _hdr.palsize()),
-    _image(_hdr.bytesperline() * _hdr.height())
+    _pal(fname, _hdr.palsize())
 {
-  referer<stream> file = stream::create(fname, fmREAD, fmBINARY);
+  _image = static_cast<uchar*>(malloc(_hdr.bytesperline() * _hdr.height()));
+  if( _image == 0 )
+    bmp_error("can't allocate memory buffer");
+  FILE* file = fopen(fname, "rb");
+  if( file == 0 )
+    bmp_error("can't open file");
   read(file);
 }
 
 bitmap::bitmap( int height, int width, const bmp_pal& pal )
   : _hdr(height, width, pal.len()),
-    _pal(pal),
-    _image(_hdr.bytesperline() * _hdr.height())
+    _pal(pal)
 {
+  _image = static_cast<uchar*>(malloc(_hdr.bytesperline() * _hdr.height()));
+  if( _image == 0 )
+    bmp_error("can't allocate memory buffer");
+}
+
+bitmap::~bitmap()
+{
+  free(_image);
 }
 
 void bitmap::save( const char* name )
 {
-  referer<stream> file = stream::create(name, fmWRITE, fmBINARY);
+  FILE* file = fopen(name, "wb");
+  if( file == 0 )
+    bmp_error("can't open file");
   _hdr.save(file);
   _pal.save(file);
   write(file);
@@ -296,7 +354,7 @@ uchar bitmap::getcolidx( int lidx, int x ) const
       lidx += x;
       return _image[lidx];
     default:
-      fail_unexpected();
+      bmp_error("unexpected depth of color");
       return 0; // has no mean!
   }
 }
@@ -323,7 +381,7 @@ void bitmap::setcolidx( int lidx, int x, int cidx )
       _image[lidx] = (cidx & 0x00FF);
       break;
     default:
-      fail_unexpected();
+      bmp_error("unexpected depth of color");
   }
 }
 
@@ -331,7 +389,10 @@ bmp_rgb bitmap::get( int y, int x ) const
 {
   int lx = _hdr.width();
   int ly = _hdr.height();
-  test_index2(x, lx, y, ly);
+  if( x < 0 || x > lx-1 )
+    bmp_error("x-coord out of image size");
+  if( y < 0 || y > ly-1 )
+    bmp_error("y-coord out of image size");
 
   // переходим к естественной для bmp системе координат
   y = _hdr.height() - y - 1;
@@ -354,9 +415,12 @@ void bitmap::put( int y, int x, bmp_rgb rgb )
 {
   int lx = _hdr.width();
   int ly = _hdr.height();
-  test_index2(x, lx, y, ly);
+  if( x < 0 || x > lx-1 )
+    bmp_error("x-coord out of image size");
+  if( y < 0 || y > ly-1 )
+    bmp_error("y-coord out of image size");
   if( _hdr.bitsperpixel() != 24 && _hdr.bitsperpixel() != 32 )
-    fail_assert("can't set RGB for image with palette");
+    bmp_error("can't set RGB for image with palette");
 
   // переходим к естественной для bmp системе координат
   y = _hdr.height() - y - 1;
@@ -373,7 +437,7 @@ void bitmap::put( int y, int x, bmp_rgb rgb )
 void bitmap::fill( bmp_rgb rgb )
 {
   if( _hdr.bitsperpixel() != 24 && _hdr.bitsperpixel() != 32 )
-    fail_assert("can't set RGB for image with palette");
+    bmp_error("can't set RGB for image with palette");
 
   int lx = _hdr.width();
   int ly = _hdr.height();
@@ -394,11 +458,14 @@ void bitmap::put( int y, int x, int cidx )
 {
   int lx = _hdr.width();
   int ly = _hdr.height();
-  test_index2(x, lx, y, ly);
+  if( x < 0 || x > lx-1 )
+    bmp_error("x-coord out of image size");
+  if( y < 0 || y > ly-1 )
+    bmp_error("y-coord out of image size");
   if( _hdr.bitsperpixel() == 24 || _hdr.bitsperpixel() == 32 )
-    fail_assert("can't use palette with truecolor bitmap");
+    bmp_error("can't use palette with truecolor bitmap");
   if( cidx < 0 || cidx >= _hdr.palsize() )
-    runtime("color out of palette (%d)", cidx);
+    bmp_error("color out of palette");
 
   // переходим к естественной для bmp системе координат
   y = _hdr.height() - y - 1;
@@ -413,9 +480,9 @@ void bitmap::put( int y, int x, int cidx )
 void bitmap::fill( int cidx )
 {
   if( _hdr.bitsperpixel() == 24 || _hdr.bitsperpixel() == 32 )
-    fail_assert("can't use palette with truecolor bitmap");
+    bmp_error("can't use palette with truecolor bitmap");
   if( cidx < 0 || cidx >= _hdr.palsize() )
-    runtime("color out of palette (%d)", cidx);
+    bmp_error("color out of palette");
 
   int lx = _hdr.width();
   int ly = _hdr.height();
@@ -427,5 +494,3 @@ void bitmap::fill( int cidx )
       setcolidx(lidx, x, cidx);
   }
 }
-
-}; // namespace lwml
