@@ -363,6 +363,8 @@ namespace {
 void save_as_riff( const char* fname, const double* data, int len, int sps )
 {
   FILE* file = fopen(fname, "wb");
+  if( file == 0 )
+    riff_error("can't create file");
 
   int riff_size = WAVEFORMID_SIZE + FMTCHUNK_SIZE + DATACHUNK_SIZE(len);
   // RIFF-chunk

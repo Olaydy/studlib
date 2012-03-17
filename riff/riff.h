@@ -7,8 +7,14 @@
 
 #include "cdefs.h"
 
+// Обработка ошибок
+
+// Тип функции-обработчика ошибок.
 typedef void (*riff_error_t)( const char* msg );
 
+// Установка обработчика ошибок.
+// По умолчанию обработчик ошибок выводит сообщение на stdout
+// и завершает выполнение программы.
 void setup_riff_error( riff_error_t );
 
 // Чтение файла формата wav
@@ -65,6 +71,10 @@ private:
 
   int wait4data();
   int wait4fmt();
+
+  // запрещаем копировать объект
+  riffwave_reader( const riffwave_reader& );
+  riffwave_reader& operator=( const riffwave_reader& );
 };
 
 // Вывод массива data длиной len в одноканальный 16-битный wav с именем fname.
